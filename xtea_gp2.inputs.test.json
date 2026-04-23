@@ -1,0 +1,34 @@
+{
+  "_comment_header": "XteaBatch inputs para pilot de 1 amostra. Preencha os paths PREENCHER_* antes de submeter.",
+
+  "XteaBatch.samples": [
+    {
+      "sample_id": "PREENCHER_SAMPLE_ID",
+      "cram":  "gs://PREENCHER-gp2-r11-cram-bucket/path/to/sample.cram",
+      "crai":  "gs://PREENCHER-gp2-r11-cram-bucket/path/to/sample.cram.crai"
+    }
+  ],
+
+  "_comment_reference": "GRCh38 da Broad (bucket publico, sem requester-pays). Confirme com admin do GP2 que eles usam essa mesma referencia.",
+  "XteaBatch.reference_fa":  "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta",
+  "XteaBatch.reference_fai": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.fai",
+
+  "_comment_xtea_resources": "Baixe do repo do xTea e suba pro seu bucket do workspace. Ver README secao 'Setup inicial'.",
+  "XteaBatch.rep_lib_tar_gz":       "gs://PREENCHER-seu-workspace-bucket/xtea-resources/rep_lib_annotation.tar.gz",
+  "XteaBatch.gene_annotation_gff3": "gs://PREENCHER-seu-workspace-bucket/xtea-resources/gencode.v33.annotation.gff3",
+
+  "_comment_output": "Bucket de output do seu workspace. Os VCFs finais vao pra {output_bucket_prefix}/{sample_id}/{L1,Alu,SVA}/.",
+  "XteaBatch.output_bucket_prefix": "gs://PREENCHER-gp2-r11-xtea-results-cdoamaral/xtea_outputs",
+
+  "_comment_families": "7 = L1+Alu+SVA (bitflag: 1=L1, 2=Alu, 4=SVA, 8=HERV).",
+  "XteaBatch.te_families_flag": 7,
+
+  "_comment_defaults": "clip_window omitido propositalmente pra usar o default do xTea. Todos os outros params do xTea tambem ficam nos defaults.",
+
+  "_comment_resources": "Defaults pra WGS 30x. Retry automatico se falhar (2 tentativas preemptible + 1 on-demand).",
+  "XteaBatch.cpu":               8,
+  "XteaBatch.memory_gb":         32,
+  "XteaBatch.disk_gb":           200,
+  "XteaBatch.preemptible_tries": 2,
+  "XteaBatch.max_retries":       1
+}
