@@ -1,229 +1,117 @@
-# xTea Pilot WDL — Verily Workbench / GP2
+# te-callers-wdl
 
-Roda o xTea 0.1.9 em amostras WGS do GP2 via Cromwell no Verily Workbench,
-com Google Batch API como executor. Submete e esquece: não depende de você
-manter o laptop aberto.
+WDL workflows for running transposable element (TE) callers at scale on
+Google Cloud / Verily Workbench, with Google Batch API as the task executor.
 
-## O que ele faz
+## Context
 
-Pra cada amostra na input list:
+Part of a research project characterizing non-reference TE insertions
+(Alu, LINE-1, SVA) and their association with Parkinson's disease risk
+and progression, using the GP2 (Global Parkinson's Genetics Program) WGS
+cohort.
 
-1. Baixa CRAM + referência pra uma VM dedicada do Google Batch
-2. Roda o xTea (gen scripts + align + collect + call + filter) pras famílias
-   L1, Alu, SVA (configurável)
-3. Copia os VCFs finais + relatórios pro bucket de output do workspace
-4. Destrói a VM (você só paga pelo tempo de execução)
+The workflows in this repo are designed to scale from a single-sample
+pilot (to benchmark time / cost / memory) up to the full GP2 Release 11
+batch (several thousand samples). They run unattended on Google Batch
+API VMs — no local machine or HPC login node needs to stay open during
+execution.
 
-Saída final no bucket:
+## Workflows
 
-```
-gs://.../xtea_outputs/
-└── SAMPLE_ID/
-    ├── L1/
-    │   ├── SAMPLE_ID_LINE1.vcf
-    │   ├── candidate_disc_filtered_cns.txt
-    │   └── run_L1.log
-    ├── Alu/
-    │   └── SAMPLE_ID_ALU.vcf
-    ├── SVA/
-    │   └── SAMPLE_ID_SVA.vcf
-    └── runtime_stats.tsv
-```
-
-## Setup inicial (uma vez só)
-
-### 1. Criar bucket de output no workspace
-
-Na UI do Workbench: **Resources → + Cloud resource → New Cloud Storage bucket**.
-
-Nome sugerido: `gp2-r11-xtea-results-cdoamaral` (tem que ser globalmente único
-no GCS, então prefixa com algo distintivo).
-
-### 2. Subir os resources do xTea pro bucket
-
-O xTea precisa de dois arquivos auxiliares que ele não distribui no container:
-
-**rep_lib_annotation.tar.gz** (~500 MB) — biblioteca de consensus sequences
-pras famílias de TE. Download:
-
-```bash
-# Do repo do xTea (ver https://github.com/parklab/xTea#step-21):
-wget https://github.com/parklab/xTea/releases/download/v0.1.9/rep_lib_annotation.tar.gz
-```
-
-**gencode.v33.annotation.gff3** — GENCODE v33 é o que o xTea original usa
-pra classificação (exônico / intrônico / intergênico). Qualquer versão
-recente do GENCODE funciona; usa a v33 pra bater com os papers:
-
-```bash
-wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_33/gencode.v33.annotation.gff3.gz
-gunzip gencode.v33.annotation.gff3.gz
-```
-
-Sobe os dois pro seu bucket do workspace (pode ser num subdir
-`xtea-resources/` — o Workbench tem um terminal com `gsutil` já instalado):
-
-```bash
-gsutil cp rep_lib_annotation.tar.gz gs://SEU-BUCKET/xtea-resources/
-gsutil cp gencode.v33.annotation.gff3 gs://SEU-BUCKET/xtea-resources/
-```
-
-### 3. Descobrir o path dos CRAMs do GP2 R11
-
-No Workbench, acessa o workspace compartilhado do GP2. Os CRAMs ficam em um
-bucket que o admin do GP2 deu acesso (nome varia por release). Normalmente
-tem um manifest `.tsv` listando todos os samples; de lá você pega:
-
-- `sample_id` (ou equivalente)
-- path do CRAM
-- path do CRAI (índice)
-
-Pro teste, escolhe UMA amostra aleatória e anota os paths.
-
-### 4. Adicionar o WDL ao workspace
-
-Tem 2 opções (ver
-[docs](https://support.workbench.verily.com/docs/guides/workflows/cromwell/)):
-
-**Opção A — via GCS bucket:**
-```bash
-gsutil cp xtea_gp2.wdl gs://SEU-BUCKET/wdls/
-```
-Depois na UI: **Workflows → Add workflow → escolhe o bucket e o .wdl**.
-
-**Opção B — via GitHub (recomendado se você quer versionar):**
-Comita o WDL num repo GitHub, conecta a conta em
-**Profile → Linked accounts → GitHub**, e aponta pro repo quando adicionar
-o workflow.
-
-## Rodando o teste
-
-### 1. Preparar o input JSON
-
-Abre `xtea_gp2.inputs.test.json`, substitui todos os `TODO-...` pelos paths
-reais:
-
-- `cram`/`crai` — da amostra que você escolheu do GP2
-- `rep_lib_tar_gz` / `gene_annotation_gff3` — do seu bucket de resources
-- `output_bucket_prefix` — do seu bucket de output
-
-### 2. Submeter
-
-**Via UI:**
-1. Workflows → seleciona `xtea_gp2` → **New job**
-2. **Enter job details** → nome: `xtea-pilot-test-001`
-3. **Prepare inputs** → cola o JSON editado (ou preenche campo por campo)
-4. Marca **Enable call caching** (economiza se você re-submeter)
-5. **Submit**
-
-**Via CLI:** (do app do Workbench, em um terminal)
-```bash
-wb workflow job run xtea_gp2 \
-  --inputs-file xtea_gp2.inputs.test.json \
-  --name xtea-pilot-test-001 \
-  --enable-call-caching
-```
-
-### 3. Monitorar
-
-A execução dispara UMA VM do Google Batch (pros parâmetros default: 8 CPUs,
-32 GB RAM, 200 GB disk). Você pode fechar o laptop.
-
-Status a qualquer momento:
-
-**Via UI:** Workflows → Job status → clica no job.
-
-**Via CLI:**
-```bash
-wb workflow job list
-wb workflow job describe <job-id>
-```
-
-### 4. Ver os resultados
-
-Depois que o job terminar:
-
-```bash
-# Lista o que foi gerado
-gsutil ls -r gs://SEU-BUCKET/xtea_outputs/TEST_SAMPLE_001/
-
-# Estatísticas de runtime
-gsutil cat gs://SEU-BUCKET/xtea_outputs/TEST_SAMPLE_001/runtime_stats.tsv
-
-# Baixa os VCFs pra analisar localmente
-gsutil -m cp -r gs://SEU-BUCKET/xtea_outputs/TEST_SAMPLE_001 ./
-```
-
-## Interpretando o benchmark
-
-Depois do primeiro run, você vai ter:
-
-| Métrica | Onde olhar | Comparar com Setonix |
+| Workflow | Status | Purpose |
 |---|---|---|
-| Tempo total | `runtime_stats.tsv` → `elapsed_human` | tempo do seu sbatch PPMI |
-| Memória pico | `runtime_stats.tsv` → `peak_memory_kb` | (não tinha medida equivalente) |
-| Custo USD | UI do Cromwell → "Cost" no job detail | N/A (HPC é free pra você) |
-| N variantes L1 | `grep -vc '^#' L1/*_LINE1.vcf` | seu output PPMI |
-| N variantes Alu | `grep -vc '^#' Alu/*_ALU.vcf` | seu output PPMI |
-| N variantes SVA | `grep -vc '^#' SVA/*_SVA.vcf` | seu output PPMI |
+| `xtea_gp2.wdl` | ✅ Pilot-ready | Calls TE insertions with [xTea](https://github.com/parklab/xTea) (L1, Alu, SVA, HERV) |
+| `melt_gp2.wdl` | 🚧 Planned | Calls TE insertions with [MELT](https://melt.igs.umaryland.edu/) — for cross-tool comparison |
 
-**Critério de validação:** se os counts bateram com o que você viu no PPMI
-(mesma ordem de magnitude, perfil similar de SVLEN), o WDL tá correto.
+Both workflows are designed with the same skeleton (scatter by sample,
+stage CRAM from Requester Pays bucket, publish results to a destination
+bucket) so that runtime and output metrics are directly comparable.
 
-## Estimativa de custo e tempo
+## Repository layout
 
-Pra 1 amostra WGS 30x CRAM:
+```
+te-callers-wdl/
+├── xtea_gp2.wdl                  # xTea workflow (3 tasks: StageCram, RunXtea, PublishResults)
+├── xtea_gp2.inputs.test.json     # Example inputs for a 1-sample pilot
+├── README.md                     # This file
+└── docs/
+    └── xtea_pilot_walkthrough.md # Step-by-step guide for the xTea pilot run
+```
 
-| Item | Estimativa |
-|---|---|
-| Tempo xTea (3 famílias) | 6–14h |
-| VM recommended | n2-standard-8 (8 vCPU, 32 GB) |
-| Custo on-demand | US$ 0.40/h × 10h ≈ **US$ 4** |
-| Custo preemptible | US$ 0.10/h × 10h ≈ **US$ 1** |
-| Storage (200 GB SSD × 10h) | US$ 0.23/h ≈ **US$ 2** |
-| **Total por amostra** | **~US$ 3–6** |
+## xTea workflow — quick overview
 
-Extrapolando:
+**Inputs**
+- A list of samples (`sample_id`, CRAM path, CRAI path) in GCS
+- GRCh38 reference (FASTA + FAI)
+- xTea resources (`rep_lib_annotation.tar.gz` + GENCODE v33 GFF3)
+- Destination bucket prefix for output VCFs
+- Flag for Requester Pays buckets (required for GP2 CRAM bucket)
 
-| Dataset | Estimativa total |
-|---|---|
-| 1 amostra (pilot) | ~US$ 5 |
-| 100 amostras (bloco de testes) | ~US$ 500 |
-| 5.000 amostras (GP2 R11 subset) | ~US$ 25.000 |
+**Per-sample pipeline**
+1. **StageCram** — downloads CRAM + CRAI using `gsutil -u PROJECT` (to support
+   Requester Pays billing)
+2. **RunXtea** — runs the full xTea pipeline (script generation → alignment →
+   read collection → calling → filtering) for the requested TE families
+3. **PublishResults** — uploads the final VCFs, reports, and runtime stats
+   to the destination bucket
 
-**IMPORTANTE:** essas são estimativas grosseiras. Rode o pilot de 1
-amostra primeiro, colete o número real de `runtime_stats.tsv`, depois
-multiplica pra saber quanto vai custar o batch inteiro.
+**Outputs per sample**
+```
+{output_bucket_prefix}/{sample_id}/
+├── L1/{sample_id}_LINE1.vcf
+├── Alu/{sample_id}_ALU.vcf
+├── SVA/{sample_id}_SVA.vcf
+└── runtime_stats.tsv   # elapsed time, peak memory, VM config — used for benchmarking
+```
 
-## Troubleshooting
+**Default resources** (tunable per job): 8 vCPU, 32 GB RAM, 200 GB local SSD,
+n2-standard-8 on Google Batch, with 2 preemptible retries + 1 on-demand fallback.
 
-### Job falha com "out of memory"
-Aumenta `memory_gb` no input JSON (32 → 48 → 64). Amostras com cobertura
-alta ou muita heterogeneidade podem pedir mais.
+## Running the pilot (first-time use)
 
-### Job falha com "disk full"
-Aumenta `disk_gb` (200 → 300). O xTea gera muitos intermediários; CRAMs
-grandes (~40 GB) + BAM extraído podem passar dos 200 GB.
+See `docs/xtea_pilot_walkthrough.md` for a step-by-step guide, but the
+high-level recipe is:
 
-### "xtea: command not found" dentro do container
-O binário do container BioContainers é `xtea` (lowercase) e tá no PATH por
-default. Se mudou, veja `singularity exec xtea_0.1.9.sif which xtea`.
+1. **Prepare xTea resources** (once per project): download
+   `rep_lib_annotation.tar.gz` from the xTea repo and `gencode.v33.annotation.gff3`
+   from GENCODE, then upload both to your workspace bucket.
+2. **Link this repo to Verily Workbench**: in Workbench, go to
+   *Profile → Linked accounts → GitHub*, authorize, then in your workspace
+   go to *Workflows → + Add workflow → Git repository* and select
+   `xtea_gp2.wdl` from this repo.
+3. **Edit inputs**: copy `xtea_gp2.inputs.test.json` and fill in the paths
+   specific to your workspace (sample CRAM, rep_lib, gene annotation,
+   output bucket).
+4. **Submit**: from the Workflows UI, click *New job*, paste the inputs,
+   submit. You can close your laptop — the workflow runs on Google Batch
+   VMs independent of your session.
+5. **Review**: expected wall-time is 7–13 hours for a single 30× WGS CRAM
+   (~13 GB). Read `runtime_stats.tsv` from the output bucket to decide
+   resource sizing for the full batch.
 
-### Preemption atrapalha jobs longos
-Se o xTea roda 12h e é preemptado na hora 11, perde quase tudo (xTea
-não tem checkpoint nativo). Pra amostras que sabidamente demoram muito,
-considere `preemptible_tries: 0` — mais caro, mas mais confiável.
+## Requirements
 
-### Quer re-rodar sem pagar de novo
-`Enable call caching` na submissão. Se os inputs (hash dos CRAMs etc.) não
-mudaram, o Cromwell pega do cache e não re-executa.
+- A Verily Workbench workspace with:
+  - Read access to the GP2 CRAM bucket (`gs://gp2_crams` — Requester Pays)
+  - A workspace bucket to store xTea resources and output VCFs
+  - The Cromwell engine enabled (default on Workbench)
+- A linked GitHub account (for the Workbench to pull this WDL)
 
-## Próximos passos depois do pilot
 
-1. Confirmar contagens de variantes vs PPMI Setonix
-2. Medir tempo/custo real (vem do `runtime_stats.tsv`)
-3. Preparar input JSON com 10–20 amostras pro batch médio
-4. Decidir `preemptible_tries` baseado na duração observada
-5. (Paralelo) Criar WDL equivalente de MELT pra comparar
-6. Rodar merge populacional (`x_vcf_merger.py -P`) depois que o batch
-   terminar, baixando os VCFs individuais pro bucket e consolidando
+These are order-of-magnitude estimates. Run the 1-sample pilot first and
+refine from `runtime_stats.tsv` before submitting the full batch.
+
+## References
+
+- xTea — Chu C. et al., *Comprehensive identification of transposable element
+  insertions using multiple sequencing technologies*, **Nat Commun** 12, 3836 (2021).
+  <https://doi.org/10.1038/s41467-021-24041-8>
+- MELT — Gardner E.J. et al., *The Mobile Element Locator Tool (MELT): population-scale
+  mobile element discovery and biology*, **Genome Res** 27, 1916–1929 (2017).
+- GP2 — Global Parkinson's Genetics Program. <https://gp2.org>
+- Verily Workbench Cromwell docs — <https://support.workbench.verily.com/docs/guides/workflows/cromwell/>
+
+## License
+
+MIT (see LICENSE file). xTea and MELT have their own licenses — consult
+their respective repositories before non-academic use.
