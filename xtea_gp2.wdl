@@ -3,51 +3,45 @@ version 1.0
 ## ============================================================================
 ## xtea_gp2.wdl
 ##
-## Roda xTea 0.1.9 em amostras WGS do GP2 (CRAM em GCS) e copia os VCFs
-## por família (L1, Alu, SVA) pra um bucket GCS de destino.
+## Run xTea 0.1.9 and copy VCFs to a GS destination bucket
 ##
-## Estrutura:
-##   - workflow XteaBatch: recebe uma lista de samples, scatter por amostra
-##   - task RunXtea: roda o xTea em UMA amostra (gen1 + gen2 + collect)
-##   - task PublishResults: copia VCFs finais pro bucket de output
+## Structure:
+##   - workflow XteaBatch: get list of samples
+##   - task RunXtea: run xtea in one sample at a time
+##   - task PublishResults: copy final VCFs to a destination bucket
 ##
-## Referência:
+## Reference:
 ##   Container: quay.io/biocontainers/xtea:0.1.9--hdfd78af_0
 ##   Repo: https://github.com/parklab/xTea
 ##
-## Recursos típicos por amostra (WGS 30x, GRCh38):
-##   - CPU: 8
-##   - RAM: 32 GB (com margem; tem amostra que pede mais)
-##   - Disk: 200 GB local SSD (CRAM ~30 GB + BAM convertido ~60 GB + intermediários)
-##   - Tempo: 6-14h (depende muito da cobertura e da fração de reads discordantes)
 ## ============================================================================
 
 workflow XteaBatch {
     input {
-        # Lista de amostras a processar. Cada entrada: sample_id + cram + crai
+        # Sample list. sample_id + cram + crai
         Array[SampleInfo] samples
 
-        # Referência GRCh38 (use a do bucket público da Broad)
+        # Reference GRCh38
         File reference_fa
         File reference_fai
 
-        # Bibliotecas de repeats do xTea (vem no repo, tem no bucket público também)
+        # Repeat library from xTea 
         # https://github.com/parklab/xTea#step-21-download-pre-processed-repeat-library
         File rep_lib_tar_gz
 
-        # Gene annotation (GENCODE v33 gff3 — usado pelo xTea pra classificação)
+        # Gene annotation (GENCODE v33 gff3)
         File gene_annotation_gff3
 
-        # Bucket onde vamos publicar os resultados finais
-        # Ex: "gs://gp2-r11-xtea-results-cdoamaral/xtea_outputs"
+        # Destination Bucket
+        # Ex: "gs://xtea-workflow-wb-lukewarm-blueberry-5144/xtea_outputs"
         String output_bucket_prefix
 
-        # Qual families chamar. "-y 7" = L1+Alu+SVA (bitflag: 1=L1, 2=Alu, 4=SVA).
+        # "-y 7" = L1+Alu+SVA (bitflag: 1=L1, 2=Alu, 4=SVA).
         # "-y 15" = L1+Alu+SVA+HERV.
         Int te_families_flag = 7
 
-        # Janela de clustering de breakpoints (bp).
-        # Se null/omitido, usa o default do próprio xTea (recomendado pro benchmark).
+        #Clustering breakpoints window
+        # If null, use xtea default
         Int? clip_window
 
         # Runtime tunables
@@ -103,7 +97,7 @@ workflow XteaBatch {
 }
 
 ## ----------------------------------------------------------------------------
-## Struct dos inputs por amostra
+## Struct dos inputs per sample
 ## ----------------------------------------------------------------------------
 struct SampleInfo {
     String sample_id
@@ -114,12 +108,12 @@ struct SampleInfo {
 ## ----------------------------------------------------------------------------
 ## Task: RunXtea
 ##
-## Executa o pipeline completo do xTea numa única amostra. Passos:
-##   1. Localiza CRAM + reference (o Cromwell baixa automaticamente)
-##   2. Gera sample_id.list e bam_list.txt (formato que o xTea espera)
-##   3. Chama `xtea -i sample.list -b bam_list.txt ...` -> gera scripts
-##   4. Executa os scripts gerados (gen1, gen2, collect_reads, pipeline)
-##   5. Empacota L1/Alu/SVA VCFs + logs num tar.gz pra publicar depois
+## Execute xtea pipeline in one sample
+##   1. Find CRAM + reference 
+##   2. Generate sample_id.list e bam_list.txt 
+##   3. Call `xtea -i sample.list -b bam_list.txt ...` -> generate scripts
+##   4. Execute generated scripts (gen1, gen2, collect_reads, pipeline)
+##   5. Zip L1/Alu/SVA VCFs + logs num tar.gz pra publicar depois
 ## ----------------------------------------------------------------------------
 task RunXtea {
     input {
@@ -152,8 +146,7 @@ task RunXtea {
         WORK="$(pwd)"
         mkdir -p "${WORK}/xtea_work" "${WORK}/output"
 
-        # -------- Extrai rep_lib --------
-        # xTea precisa da pasta rep_lib_annotation/ descompactada
+        # -------- Extract rep_lib --------
         echo "[xtea-wdl] Extracting rep_lib..."
         tar -xzf ~{rep_lib_tar_gz} -C "${WORK}/xtea_work/"
         REP_LIB_DIR=$(find "${WORK}/xtea_work" -maxdepth 2 -type d -name "rep_lib_annotation" | head -1)
@@ -163,7 +156,7 @@ task RunXtea {
         fi
         echo "[xtea-wdl] rep_lib at: ${REP_LIB_DIR}"
 
-        # -------- Monta sample list e bam list --------
+        # -------- Mount sample list and bam list --------
         # Formato sample.list: um sample_id por linha
         echo "~{sample_id}" > "${WORK}/sample_id.list"
 
